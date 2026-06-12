@@ -1,0 +1,871 @@
+import { useState, useRef, useEffect, useMemo } from 'react'
+import { createPortal } from 'react-dom'
+import {
+  FilePlus, Pencil, Search, ChevronDown, X, Plus, UserPlus, User, Users, Smartphone,
+} from 'lucide-react'
+import { useApp } from '../context/AppContext'
+import { Modal, FormGroup } from '../components/UI'
+import { countries } from '../data/mockData'
+import { ContactImportButton } from '../features/contacts'
+
+/* ─────────────────────────────────────────────────────────────
+   Responsive hook for mobile detection
+───────────────────────────────────────────────────────────── */
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 640)
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 640)
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  return isMobile
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Searchable Combobox  (portal-based, escapes modal overflow)
+───────────────────────────────────────────────────────────── */
+function Combobox({
+  options = [], value = '', onChange, placeholder,
+  getKey, getLabel, renderOption,
+  onAddNew, addNewLabel = 'Shto të ri',
+  textClass = 'text-sm',
+}) {
+  const [open, setOpen]     = useState(false)
+  const [search, setSearch] = useState('')
+  const triggerRef          = useRef(null)
+  const dropRef             = useRef(null)
+  const [pos, setPos]       = useState({ top: 0, left: 0, width: 200 })
+
+  const openDrop = () => {
+    if (triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect()
+      setPos({ top: r.bottom + 4, left: r.left, width: r.width })
+    }
+    setOpen(v => !v)
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const h = e => {
+      if (!triggerRef.current?.contains(e.target) && !dropRef.current?.contains(e.target)) {
+        setOpen(false); setSearch('')
+      }
+    }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [open])
+
+  // Deduplicate options once based on key
+  const deduplicatedOptions = useMemo(() => {
+    if (!getKey) return options
+    const seen = new Set()
+    return options.filter(o => {
+      const key = getKey(o)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }, [options, getKey])
+
+  // Filter deduped options by search
+  const filtered = useMemo(() => {
+    return deduplicatedOptions.filter(o =>
+      getLabel(o).toLowerCase().includes(search.toLowerCase())
+    )
+  }, [deduplicatedOptions, search, getLabel])
+  const selected = options.find(o => getLabel(o) === value)
+
+  return (
+    <>
+      <div
+        ref={triggerRef}
+        className="form-control flex items-center justify-between cursor-pointer select-none gap-2 min-h-[38px]"
+        onClick={openDrop}
+      >
+        <span className={`${textClass} truncate flex-1 ${selected ? 'text-gray-800' : 'text-gray-400'}`}>
+          {selected ? getLabel(selected) : placeholder}
+        </span>
+        <ChevronDown size={14} className={`text-gray-400 flex-shrink-0 transition-transform duration-150 ${open ? 'rotate-180' : ''}`} />
+      </div>
+
+      {open && createPortal(
+        <div
+          ref={dropRef}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, zIndex: 9999 }}
+          className="bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden"
+        >
+          <div className="p-2 bg-gray-50 border-b border-gray-100">
+            <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-2.5 py-1.5">
+              <Search size={12} className="text-gray-400 flex-shrink-0" />
+              <input
+                autoFocus
+                className="bg-transparent outline-none text-xs w-full text-gray-700 placeholder-gray-400"
+                placeholder="Kërko..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+              {search && <button onClick={() => setSearch('')} className="text-gray-300 hover:text-gray-500"><X size={10}/></button>}
+            </div>
+          </div>
+          <div className="max-h-52 overflow-y-auto">
+            {filtered.length === 0 && !onAddNew && (
+              <p className="text-xs text-gray-400 text-center py-4 italic">Nuk u gjet asgjë</p>
+            )}
+            {filtered.map((o, i) => (
+              <div
+                key={getKey ? getKey(o) : i}
+                className={`px-3 py-2.5 cursor-pointer hover:bg-blue-50 transition-colors border-b border-gray-50 last:border-0 ${
+                  getLabel(o) === value ? 'bg-blue-50' : ''
+                }`}
+                onClick={() => { onChange(o); setOpen(false); setSearch('') }}
+              >
+                {renderOption ? renderOption(o) : (
+                  <span className={`text-sm ${getLabel(o) === value ? 'text-blue-600 font-semibold' : 'text-gray-700'}`}>
+                    {getLabel(o)}
+                  </span>
+                )}
+              </div>
+            ))}
+            {onAddNew && (
+              <div
+                className="px-3 py-2.5 cursor-pointer hover:bg-emerald-50 transition-colors border-t border-gray-100 flex items-center gap-2"
+                onClick={() => { onAddNew(search); setOpen(false); setSearch('') }}
+              >
+                <UserPlus size={13} className="text-emerald-600 flex-shrink-0" />
+                <span className="text-sm text-emerald-700 font-semibold">
+                  {addNewLabel}
+                  {search && <span className="text-emerald-500 font-normal ml-1">"{search}"</span>}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
+  )
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Quick-Add Customer  (forma e plotë, identike me Klientët)
+───────────────────────────────────────────────────────────── */
+const CUST_COLORS = ['#2563eb','#7c3aed','#059669','#d97706','#dc2626','#0891b2','#be185d','#0f766e']
+
+const FLD = 'text-[10px] text-gray-500 font-bold uppercase tracking-wide block mb-1'
+
+function QuickAddCustomer({ initialName, onSave, onCancel }) {
+  const parts = (initialName || '').trim().split(' ')
+  const [form, setForm] = useState({
+    type:       'individual',
+    firstName:  parts[0] || '',
+    lastName:   parts.slice(1).join(' ') || '',
+    phone:      '',
+    email:      '',
+    country:    'Kosovë',
+    app:        '',
+    macAddress: '',
+    username:   '',
+    panel:      '',
+    referredBy: '',
+    color:      CUST_COLORS[0],
+  })
+  const [err, setErr] = useState('')
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const isReseller = form.type === 'reseller'
+
+  const handleSave = () => {
+    if (!form.firstName.trim()) { setErr('Emri është i detyrueshëm.'); return }
+    if (!form.lastName.trim())  { setErr('Mbiemri është i detyrueshëm.'); return }
+    if (!form.phone.trim())     { setErr('Numri i telefonit është i detyrueshëm.'); return }
+    if (!form.country)          { setErr('Shteti është i detyrueshëm.'); return }
+    onSave(form)
+  }
+
+  return (
+    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-4">
+      {/* Header */}
+      <div className="flex items-center gap-1.5 mb-3">
+        <UserPlus size={14} className="text-emerald-600" />
+        <span className="text-xs font-bold text-emerald-700">Klient i ri — plotëso të dhënat</span>
+      </div>
+
+      {err && (
+        <div className="text-xs text-blue-600 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 mb-3">{err}</div>
+      )}
+
+      {/* Lloji */}
+      <div className="mb-3">
+        <label className={FLD}>Lloji i klientit *</label>
+        <div className="flex gap-2">
+          <button type="button" onClick={() => set('type', 'individual')}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold border-2 transition-all ${
+              !isReseller ? 'border-blue-500 bg-blue-500 text-white' : 'border-gray-200 bg-white text-gray-500 hover:border-blue-300'
+            }`}>
+            <User size={12}/> Individual
+          </button>
+          <button type="button" onClick={() => set('type', 'reseller')}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold border-2 transition-all ${
+              isReseller ? 'border-purple-600 bg-purple-600 text-white' : 'border-gray-200 bg-white text-gray-500 hover:border-purple-300'
+            }`}>
+            <Users size={12}/> Reseller
+          </button>
+        </div>
+      </div>
+
+      {/* Emri + Mbiemri */}
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        <div>
+          <label className={FLD}>Emri *</label>
+          <input className="form-control text-sm bg-white" autoFocus
+            value={form.firstName} onChange={e => set('firstName', e.target.value)}
+            placeholder="p.sh. Ardit" />
+        </div>
+        <div>
+          <label className={FLD}>Mbiemri *</label>
+          <input className="form-control text-sm bg-white"
+            value={form.lastName} onChange={e => set('lastName', e.target.value)}
+            placeholder="p.sh. Krasniqi" />
+        </div>
+      </div>
+
+      {/* Telefon + Email */}
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        <div>
+          <label className={FLD}>Numri i telefonit *</label>
+          <input className="form-control text-sm bg-white"
+            value={form.phone} onChange={e => set('phone', e.target.value)}
+            placeholder="+383 44 000 000" />
+        </div>
+        <div>
+          <label className={FLD}>Email</label>
+          <input className="form-control text-sm bg-white" type="email"
+            value={form.email} onChange={e => set('email', e.target.value)}
+            placeholder="email@shembull.com" />
+        </div>
+      </div>
+
+      {/* Shteti */}
+      <div className="mb-2">
+        <label className={FLD}>Shteti *</label>
+        <select className="form-control text-sm bg-white"
+          value={form.country} onChange={e => set('country', e.target.value)}>
+          <option value="">— Zgjidh shtetin —</option>
+          {countries.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+
+      {/* Fushat sipas llojit */}
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        {!isReseller ? (
+          <>
+            <div>
+              <label className={FLD}>Aplikacioni që përdor</label>
+              <input className="form-control text-sm bg-white"
+                value={form.app} onChange={e => set('app', e.target.value)}
+                placeholder="p.sh. Predator IPTV" />
+            </div>
+            <div>
+              <label className={FLD}>MAC Adresa</label>
+              <input className="form-control text-sm bg-white"
+                value={form.macAddress} onChange={e => set('macAddress', e.target.value)}
+                placeholder="AA:BB:CC:DD:EE:FF" />
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <label className={FLD}>Username</label>
+              <input className="form-control text-sm bg-white"
+                value={form.username} onChange={e => set('username', e.target.value)}
+                placeholder="p.sh. ardit_reseller" />
+            </div>
+            <div>
+              <label className={FLD}>Paneli</label>
+              <input className="form-control text-sm bg-white"
+                value={form.panel} onChange={e => set('panel', e.target.value)}
+                placeholder="p.sh. panel1.iptv.com" />
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Referuar nga */}
+      <div className="mb-3">
+        <label className={FLD}>Referuar nga</label>
+        <input className="form-control text-sm bg-white"
+          value={form.referredBy} onChange={e => set('referredBy', e.target.value)}
+          placeholder="Emri i personit që e referoi..." />
+      </div>
+
+      {/* Ngjyra */}
+      <div className="mb-4">
+        <label className={FLD}>Ngjyra e avatit</label>
+        <div className="flex gap-2 mt-1">
+          {CUST_COLORS.map(c => (
+            <button key={c} type="button" onClick={() => set('color', c)}
+              className="w-6 h-6 rounded-md transition-all flex-shrink-0"
+              style={{ background: c, outline: form.color === c ? `3px solid ${c}` : 'none', outlineOffset: 2 }} />
+          ))}
+        </div>
+      </div>
+
+      {/* Veprimet */}
+      <div className="flex gap-2 justify-end pt-3 border-t border-emerald-200">
+        <button className="btn btn-outline text-xs py-1.5 px-3" onClick={onCancel}>Anulo</button>
+        <button className="btn btn-primary text-xs py-1.5 px-3" onClick={handleSave}>
+          Shto dhe Zgjidh
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Item Row  (inline linear layout)
+───────────────────────────────────────────────────────────── */
+function ItemRow({ item, products, onUpdate, onRemove, canRemove }) {
+  const lineTotal = (Number(item.qty) || 0) * (Number(item.unitPrice) || 0)
+  const fmtN = v => new Intl.NumberFormat('de-DE').format(v)
+  const isMobile = useIsMobile()
+
+  return (
+    <div
+      className="item-row grid items-start gap-2 py-2.5 px-3 border-b border-gray-100 last:border-0 hover:bg-gray-50/50 transition-colors"
+    >
+      {/* Product combobox + description */}
+      <div className="flex flex-col gap-1 min-w-0">
+        <Combobox
+          options={products}
+          value={item.desc}
+          onChange={p => onUpdate({ desc: p.name, unitPrice: String(p.salePrice) })}
+          placeholder="Zgjedh ose shëno..."
+          getKey={p => p.id}
+          getLabel={p => p.name}
+          textClass="text-base sm:text-sm"
+          renderOption={p => (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm text-gray-800 truncate">{p.name}</span>
+              <span className="text-xs font-bold text-blue-500 flex-shrink-0">€{p.salePrice}</span>
+            </div>
+          )}
+        />
+        <input
+          className="w-full text-base sm:text-xs text-gray-500 italic bg-transparent outline-none border-b border-dashed border-gray-200 focus:border-blue-300 px-1 py-0.5 placeholder-gray-300 transition-colors"
+          placeholder="Përshkrim (opsional)..."
+          value={item.note || ''}
+          onChange={e => onUpdate({ note: e.target.value })}
+        />
+      </div>
+
+      {/* Sasia */}
+      <input
+        className="form-control text-center text-base sm:text-sm font-semibold px-1 py-2 mt-0.5"
+        type="number" min="0.01" step="1"
+        value={item.qty}
+        onChange={e => onUpdate({ qty: e.target.value })}
+      />
+
+      {/* Çmimi */}
+      <input
+        className="form-control text-right text-base sm:text-sm font-semibold px-2 py-2 mt-0.5"
+        type="number" min="0" step="0.01"
+        value={item.unitPrice}
+        onChange={e => onUpdate({ unitPrice: e.target.value })}
+        placeholder="0.00"
+      />
+
+      {/* Line total */}
+      <div className={`hidden sm:block text-right text-base sm:text-sm font-bold py-2 px-1 mt-0.5 ${lineTotal > 0 ? 'text-gray-800' : 'text-gray-300'}`}>
+        €{fmtN(lineTotal)}
+      </div>
+
+      {/* Remove */}
+      {canRemove ? (
+        <button
+          onClick={onRemove}
+          className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-blue-50 text-gray-300 hover:text-blue-400 transition-colors mt-0.5"
+        >
+          <X size={14} />
+        </button>
+      ) : <div />}
+    </div>
+  )
+}
+
+/* ── Llogarit ditët nga emri i produktit ── */
+function extractMonths(name) {
+  if (!name) return null
+  // "12+2 muaj" → 14
+  const plusMatch = name.match(/(\d+)\s*\+\s*(\d+)\s*muaj/i)
+  if (plusMatch) return parseInt(plusMatch[1]) + parseInt(plusMatch[2])
+  // "X muaj" ose "X Muaj"
+  const m = name.match(/(\d+)\s*muaj/i)
+  return m ? parseInt(m[1]) : null
+}
+function calculateSubscriptionExpiry(baseDate, months) {
+  // Llogarit datën e skadimit duke shtuar muaj kalendarë
+  const date = new Date(baseDate)
+  const year = date.getFullYear()
+  const month = date.getMonth()
+  const day = date.getDate()
+
+  // Shto muajt
+  let newMonth = month + months
+  let newYear = year
+
+  // Rregulloji vitin nëse muajt kalojnë 11
+  while (newMonth > 11) {
+    newMonth -= 12
+    newYear += 1
+  }
+
+  // Krijo datën e re
+  const expiryDate = new Date(newYear, newMonth, day)
+
+  // Nëse dita nuk ekziston në muajin e ri, përdor ditën e fundit të muajit
+  if (expiryDate.getMonth() !== newMonth) {
+    expiryDate.setDate(0) // Kthehu në ditën e fundit të muajit të mëparshëm
+  }
+
+  return expiryDate
+}
+
+/* ══════════════════════════════════════════════════════════
+   InvoiceModal
+══════════════════════════════════════════════════════════ */
+export default function InvoiceModal({ initialData, isFormPage, onClose }) {
+  const { invoices, customers, setCustomers, items: products, setInvoices, showToast, closeModal, navigate, representatives, setRepresentatives, logActivity } = useApp()
+
+  const isEdit = !!(initialData?.id)
+  const due3d  = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+
+  /* ── Init line items from existing invoice ── */
+  const initLineItems = () => {
+    if (initialData?.items?.length) {
+      return initialData.items.map(it => ({
+        id:        Math.random(),
+        desc:      it.desc  || '',
+        note:      it.note  || '',
+        qty:       it.qty   ?? 1,
+        unitPrice: it.price != null ? String(it.price) : '',
+      }))
+    }
+    return [{ id: Math.random(), desc: '', note: '', qty: 1, unitPrice: '' }]
+  }
+
+  const [lineItems,      setLineItems]      = useState(initLineItems)
+  const [discount,       setDiscount]       = useState(initialData?.discount || { value: '', type: 'fixed' })
+  const [addingCustomer, setAddingCustomer] = useState(null)   // null | { name }
+  const [error,          setError]          = useState('')
+
+  const today = new Date().toISOString().slice(0, 10)
+
+  const [form, setForm] = useState({
+    date:               initialData?.date               || today,
+    customer:           initialData?.customer           || '',
+    referent:           initialData?.referent           || '',
+    due:                initialData?.due                || due3d,
+    subscriptionExpiry: initialData?.subscriptionExpiry || '',
+    notifyDate:         initialData?.notifyDate         || '',
+    status:             initialData?.status             || 'pending',
+  })
+
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  /* ── Computed totals ── */
+  const subTotal   = lineItems.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0)
+  const discVal    = Number(discount.value) || 0
+  const discAmount = discount.type === '%' ? subTotal * discVal / 100 : Math.min(discVal, subTotal)
+  const total      = Math.max(0, subTotal - discAmount)
+  const fmtN       = v => new Intl.NumberFormat('de-DE').format(v)
+
+  /* ── Line item actions ── */
+  const addItem    = () => setLineItems(p => [...p, { id: Math.random(), desc: '', note: '', qty: 1, unitPrice: '' }])
+  const removeItem = id  => setLineItems(p => p.filter(it => it.id !== id))
+  const updateItem = (id, patch) => {
+    setLineItems(p => p.map(it => it.id === id ? { ...it, ...patch } : it))
+    // kur selektohet produkt me muaj → auto-set datën e skadimit + njoftimin
+    if (patch.desc !== undefined) {
+      const months = extractMonths(patch.desc)
+      if (months !== null) {
+        const base = new Date(initialData?.date || new Date())
+        const exp  = calculateSubscriptionExpiry(base, months)
+        const expStr    = exp.toISOString().slice(0, 10)
+        const notifyD   = new Date(exp)
+        notifyD.setDate(notifyD.getDate() - 7)
+        setForm(p => ({ ...p, subscriptionExpiry: expStr, notifyDate: notifyD.toISOString().slice(0, 10) }))
+      }
+    }
+  }
+
+  /* ── Customer ── */
+  const handleAddNewCustomer = searchText => setAddingCustomer({ name: searchText })
+  const confirmAddCustomer   = (formData) => {
+    const fullName = `${formData.firstName.trim()} ${formData.lastName.trim()}`
+    const nc = {
+      id:         `CUS-Q-${Date.now()}`,
+      name:       fullName,
+      firstName:  formData.firstName.trim(),
+      lastName:   formData.lastName.trim(),
+      phone:      formData.phone      || '',
+      email:      formData.email      || '',
+      country:    formData.country    || '',
+      app:        formData.app        || '',
+      macAddress: formData.macAddress || '',
+      username:   formData.username   || '',
+      panel:      formData.panel      || '',
+      referredBy: formData.referredBy || '',
+      type:       formData.type       || 'individual',
+      color:      formData.color      || CUST_COLORS[0],
+      total:      0,
+      invoices:   0,
+    }
+    setCustomers(p => [...p, nc])
+    set('customer', fullName)
+    setAddingCustomer(null)
+  }
+
+  /* ── Generate next sequential invoice number ── */
+  const generateNextInvoiceId = () => {
+    // Find the highest invoice number currently in use
+    let maxNum = 0
+    invoices.forEach(inv => {
+      const match = inv.id.match(/INV-(\d+)/)
+      if (match) {
+        const num = parseInt(match[1], 10)
+        if (num > maxNum) maxNum = num
+      }
+    })
+    // Increment and format as 6-digit number
+    const nextNum = maxNum + 1
+    return `INV-${String(nextNum).padStart(6, '0')}`
+  }
+
+  /* ── Save ── */
+  const save = () => {
+    const validItems = lineItems.filter(it => Number(it.unitPrice) > 0)
+    if (!form.customer)     { setError('Zgjidh klientin.'); return }
+    if (!validItems.length) { setError('Shto të paktën një artikull me çmim.'); return }
+
+    const invoiceItems = validItems.map(it => ({
+      desc:  it.desc.trim() || 'Shërbim',
+      note:  it.note?.trim() || '',
+      qty:   Number(it.qty) || 1,
+      price: Number(it.unitPrice),
+    }))
+
+    const custObj = customers.find(c => c.name === form.customer)
+    const payload = {
+      date:               form.date,
+      customer:           form.customer,
+      referent:           form.referent,
+      country:            custObj?.country || '',
+      email:              custObj?.email   || '',
+      amount:             total,
+      due:                form.due,
+      subscriptionExpiry: form.subscriptionExpiry,
+      notifyDate:         form.notifyDate,
+      status:             form.status,
+      items:              invoiceItems,
+      discount:           discVal > 0 ? { value: discVal, type: discount.type } : null,
+    }
+
+    if (isEdit) {
+      setInvoices(prev => prev.map(i => i.id === initialData.id ? { ...i, ...payload } : i))
+      logActivity(`Përditësoi faturën ${initialData.id} — ${form.customer} €${total}`, 'Faturat')
+      showToast('Fatura u përditësua! ✓')
+    } else {
+      const newId = generateNextInvoiceId()
+      setInvoices(p => [{
+        ...payload,
+        id:       newId,
+        comments: [],
+      }, ...p])
+      logActivity(`Krijoi faturën ${newId} — ${form.customer} €${total}`, 'Faturat')
+      showToast('Fatura u krijua me sukses! ✓')
+    }
+    // Navigate back to invoices list after save
+    if (isFormPage && navigate) {
+      navigate('invoices')
+    } else if (onClose) {
+      onClose()
+    } else {
+      closeModal()
+    }
+  }
+
+  const formContent = (
+    <>
+      {error && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 text-blue-600 text-xs rounded-lg px-3 py-2.5 mb-4">
+          {error}
+        </div>
+      )}
+
+      {/* ── Klienti ── */}
+      <FormGroup label="Klienti *">
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <Combobox
+              options={customers}
+              value={form.customer}
+              onChange={c => set('customer', c.name)}
+              placeholder="Zgjedh klientin..."
+              getKey={c => c.id}
+              getLabel={c => c.name}
+              renderOption={c => (
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">{c.name}</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">{[c.country, c.email].filter(Boolean).join(' · ')}</p>
+                </div>
+              )}
+              onAddNew={handleAddNewCustomer}
+              addNewLabel="Shto klient të ri"
+            />
+          </div>
+          {/* Contact Import Button - Small Icon Only */}
+          <ContactImportButton
+            variant="outline"
+            className="!px-2 !py-2 !rounded-lg h-[38px] flex-shrink-0"
+            onSelect={(contact) => {
+              // Try to find existing customer by phone or name
+              const fullName = `${contact.firstName} ${contact.lastName}`.trim()
+              const existingCustomer = customers.find(c =>
+                c.name.toLowerCase() === fullName.toLowerCase() ||
+                (contact.phone && c.phone && c.phone.replace(/[\s\+\-()]/g, '') === contact.phone.replace(/[\s\+\-()]/g, ''))
+              )
+
+              if (existingCustomer) {
+                // Select existing customer
+                set('customer', existingCustomer.name)
+                showToast(`✓ ${existingCustomer.name} u zgjodh`)
+              } else {
+                // Offer to add as new customer
+                set('customer', fullName)
+                setAddingCustomer({
+                  name: fullName,
+                  phone: contact.phone || '',
+                })
+                showToast(`Kontakti u importua. Shtoje si klient nëse duhet.`)
+              }
+            }}
+            onError={(error) => {
+              showToast(`Gabim: ${error}`, 'error')
+            }}
+          />
+        </div>
+      </FormGroup>
+
+      {/* ── Referenti (Sales Person) ── */}
+      <FormGroup label="Referenti (Përfaqësuesi)">
+        <Combobox
+          options={[
+            // Get unique representatives from:
+            // 1. Persistent representatives list
+            // 2. Customers' "Referuar nga" field
+            ...Array.from(new Set([
+              ...representatives,
+              ...customers
+                .filter(cust => cust.referredBy && cust.referredBy.trim())
+                .map(cust => cust.referredBy.trim())
+            ])).map(ref => ({ id: ref, name: ref }))
+          ]}
+          value={form.referent}
+          onChange={ref => set('referent', typeof ref === 'string' ? ref : ref.name)}
+          placeholder="Zgjedh referentin..."
+          getKey={ref => ref.id}
+          getLabel={ref => ref.name}
+          renderOption={ref => (
+            <span className="text-sm text-gray-800">{ref.name}</span>
+          )}
+          onAddNew={name => {
+            // Add new representative to persistent list if not already there
+            if (!representatives.includes(name)) {
+              setRepresentatives(prev => [...prev, name])
+            }
+            set('referent', name)
+          }}
+          addNewLabel="Shto referent të ri"
+        />
+      </FormGroup>
+
+      {/* Quick add customer form */}
+      {addingCustomer && (
+        <QuickAddCustomer
+          initialName={addingCustomer.name}
+          onSave={confirmAddCustomer}
+          onCancel={() => setAddingCustomer(null)}
+        />
+      )}
+
+      {/* ── Item Table ── */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="form-label mb-0 text-sm sm:text-base font-bold">Artikujt</label>
+          {/* Column labels */}
+          <div
+            className="hidden sm:grid text-[13px] text-gray-600 font-bold uppercase tracking-wider gap-2 pr-2 sm:pr-9"
+            style={{ gridTemplateColumns: '1fr 60px 80px 70px' }}
+          >
+            <span className="pl-2 sm:pl-3"></span>
+            <span className="text-center">Sasia</span>
+            <span className="text-right">Çmimi (€)</span>
+            <span className="text-right">Totali</span>
+          </div>
+        </div>
+
+        <div className="border border-gray-200 rounded-xl overflow-x-auto bg-white">
+          <div className="min-w-[380px]">
+          {lineItems.map(item => (
+            <ItemRow
+              key={item.id}
+              item={item}
+              products={products}
+              onUpdate={patch => updateItem(item.id, patch)}
+              onRemove={() => removeItem(item.id)}
+              canRemove={lineItems.length > 1}
+            />
+          ))}
+          </div>
+        </div>
+
+        <button
+          className="mt-2 flex items-center gap-1.5 text-[13px] font-semibold text-blue-500 hover:text-blue-700 px-1 py-1 transition-colors"
+          onClick={addItem}
+        >
+          <Plus size={13} /> Shto artikull tjetër
+        </button>
+      </div>
+
+      {/* ── Totals block ── */}
+      <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3 mb-4 space-y-2">
+        <div className="flex items-center justify-between text-base sm:text-sm">
+          <span className="text-gray-500 font-medium">Sub Total</span>
+          <span className="font-semibold text-gray-800">€{fmtN(subTotal)}</span>
+        </div>
+        <div className="flex items-center justify-between text-base sm:text-sm">
+          <div className="flex items-center gap-2 text-gray-500 font-medium">
+            <span>Zbritja</span>
+            <input
+              className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-base sm:text-xs text-right outline-none focus:border-blue-400 bg-white font-semibold"
+              type="number" min="0" max={discount.type === '%' ? 100 : undefined}
+              value={discount.value}
+              onChange={e => setDiscount(p => ({ ...p, value: e.target.value }))}
+              placeholder="0"
+            />
+            <select
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-base sm:text-xs outline-none focus:border-blue-400 bg-white text-gray-700 font-semibold"
+              value={discount.type}
+              onChange={e => setDiscount(p => ({ ...p, type: e.target.value }))}
+            >
+              <option value="%">%</option>
+              <option value="fixed">€</option>
+            </select>
+          </div>
+          <span className={`font-semibold text-base sm:text-sm ${discAmount > 0 ? 'text-blue-500' : 'text-gray-300'}`}>
+            -{discAmount > 0 ? `€${fmtN(discAmount)}` : '€0'}
+          </span>
+        </div>
+        <div className="flex items-center justify-between pt-2 border-t border-gray-200">
+          <span className="font-bold text-gray-800 text-base sm:text-sm">Total (€)</span>
+          <span className="text-2xl sm:text-xl font-bold text-blue-600">€{fmtN(total)}</span>
+        </div>
+      </div>
+
+      {/* ── Dates (Horizontal on mobile) ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
+        <FormGroup label="Data e faturës *">
+          <input className="form-control text-base sm:text-sm" type="date" value={form.date} onChange={e => set('date', e.target.value)} />
+        </FormGroup>
+        <FormGroup label="Afati i pagesës (auto: 3 ditë)">
+          <input className="form-control text-base sm:text-sm" type="date" value={form.due} onChange={e => set('due', e.target.value)} />
+        </FormGroup>
+      </div>
+
+      {/* ── Subscription dates (Horizontal on mobile) ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
+        <FormGroup label="Data e skadimit të abonimit">
+          <input className="form-control text-base sm:text-sm" type="date" value={form.subscriptionExpiry}
+            onChange={e => {
+              const v = e.target.value
+              set('subscriptionExpiry', v)
+              if (v) {
+                const d = new Date(v)
+                d.setDate(d.getDate() - 7)
+                set('notifyDate', d.toISOString().slice(0, 10))
+              }
+            }} />
+        </FormGroup>
+        <div></div>
+      </div>
+
+      {/* ── Notify date (Full width, highlight) ── */}
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 sm:p-4">
+        <FormGroup label="🔔 Rikujtim për riabonimin">
+          <input className="form-control text-base sm:text-sm bg-white" type="date" value={form.notifyDate} onChange={e => set('notifyDate', e.target.value)} />
+          <p className="text-[10px] sm:text-[11px] text-gray-500 mt-1.5">Shfaqet në menunë "Abonimet" si rikujtim për klientin.</p>
+        </FormGroup>
+      </div>
+
+      {/* ── Statusi ── */}
+      <FormGroup label="Statusi">
+        <select className="form-control" value={form.status} onChange={e => set('status', e.target.value)}>
+          <option value="draft">Draft — Ruaj si skicë</option>
+          <option value="pending">Dërgo — Në pritje</option>
+          {isEdit && <option value="overdue">Vonuar</option>}
+          {isEdit && <option value="paid">Paguar</option>}
+        </select>
+      </FormGroup>
+    </>
+  )
+
+  // If rendering as form page (side panel), don't use Modal wrapper
+  if (isFormPage) {
+    const handleCancel = () => {
+      if (navigate) {
+        navigate('invoices')
+      } else if (onClose) {
+        onClose()
+      } else {
+        closeModal()
+      }
+    }
+
+    return (
+      <div className="space-y-4">
+        {formContent}
+        <div className="flex gap-2 pt-4 border-t border-gray-200">
+          <button className="btn btn-outline flex-1" onClick={handleCancel}>Anulo</button>
+          <button className="btn btn-primary flex-1" onClick={save}>
+            {isEdit ? 'Ruaj ndryshimet' : 'Krijo Faturën'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Otherwise, render with Modal wrapper (for backwards compatibility)
+  return (
+    <Modal
+      title={
+        <span className="flex items-center gap-2">
+          {isEdit ? <Pencil size={18} className="text-blue-500"/> : <FilePlus size={18} className="text-blue-500"/>}
+          {isEdit ? 'Ndrysho Faturën' : 'Faturë e re'}
+        </span>
+      }
+      onClose={closeModal}
+      footer={<>
+        <button className="btn btn-outline" onClick={closeModal}>Anulo</button>
+        <button className="btn btn-primary" onClick={save}>
+          {isEdit ? 'Ruaj ndryshimet' : 'Krijo Faturën'}
+        </button>
+      </>}
+    >
+      {formContent}
+    </Modal>
+  )
+}
